@@ -7,9 +7,10 @@ import requests
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import time
 from flask import Flask, render_template_string, jsonify
+import os
 
-API_KEY = "YOUR-API-KEY"
-BASE64_PRIVATE_KEY = "YOUR-PRIVATE-KEY"
+API_KEY = os.getenv("API_KEY")
+BASE64_PRIVATE_KEY = os.getenv("BASE64_PRIVATE_KEY")
 
 app = Flask(__name__)
 
