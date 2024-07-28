@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 import time
 from flask import Flask, render_template_string, jsonify
 import os
+from database import Database
 
 API_KEY = os.getenv("API_KEY")
 BASE64_PRIVATE_KEY = os.getenv("BASE64_PRIVATE_KEY")
@@ -21,6 +22,7 @@ class CryptoAPITrading:
         # Note that the cryptography library used here only accepts a 32 byte ed25519 private key
         self.private_key = ed25519.Ed25519PrivateKey.from_private_bytes(private_bytes[:32])
         self.base_url = "https://trading.robinhood.com"
+        self.db = Database()
 
     @staticmethod
     def _get_current_timestamp() -> int:
@@ -51,6 +53,7 @@ class CryptoAPITrading:
             return response.json()
         except requests.RequestException as e:
             print(f"Error making API request: {e}")
+            self.db.log_error(datetime.datetime.utcnow().isoformat(), error_message)
             return None
 
     def get_authorization_header(
@@ -147,6 +150,7 @@ def get_current_price(api_trading_client: CryptoAPITrading, symbol: str = "BTC-U
         }
     else:
         current_status["message"] = "Error: 'price' not found in response"
+        self.db.log_error(datetime.datetime.utcnow().isoformat(), error_message)
         return {'price': 0.0, 'ask_inclusive_of_buy_spread': 0.0, 'bid_inclusive_of_sell_spread': 0.0}
 
 def update_buying_power(api_trading_client: CryptoAPITrading):
@@ -157,6 +161,7 @@ def update_buying_power(api_trading_client: CryptoAPITrading):
         current_status["buying_power"] = BUYING_POWER
     else:
         current_status["message"] = "Error: 'buying_power' not found in account info"
+        self.db.log_error(datetime.datetime.utcnow().isoformat(), error_message)
 
 @app.route('/')
 def index():
@@ -226,6 +231,8 @@ def main():
         current_status["ask_price"] = ask_price
         current_status["bid_price"] = bid_price
         
+         # Log current price
+        api_trading_client.db.log_price(datetime.datetime.utcnow().isoformat(), "BTC-USD", current_price, ask_price, bid_price)
         current_time = time.time()
         
         # Reset baseline price if no trades have occurred in the specified interval
@@ -234,7 +241,7 @@ def main():
             current_status["baseline_price"] = baseline_price
             current_status["message"] = f"Baseline price reset to current price: {baseline_price}"
             last_trade_time = current_time
-        
+            
         # Check for price dip
         if ask_price <= baseline_price - PRICE_DIP:
             current_status["last_action"] = f"Buy: ask_price ({ask_price}) <= baseline_price ({baseline_price}) - PRICE_DIP ({PRICE_DIP})"
@@ -246,12 +253,15 @@ def main():
                 {"asset_quantity": str(AMOUNT_TO_BUY)}
             )
             current_status["message"] = f"Buy order placed: {order}"
-            
+            # Log the buy trade
+            api_trading_client.db.log_trade(datetime.datetime.utcnow().isoformat(), "buy", AMOUNT_TO_BUY, ask_price)
+
             # Update the baseline price to the order filled price
             filled_price = ask_price # Assuming immediate fill for simplicity
             baseline_price = filled_price
             current_status["baseline_price"] = baseline_price
             last_trade_time = time.time()
+            
             
             # Wait for price increase
             while bid_price < baseline_price + PRICE_INCREASE_OFFSET:
@@ -273,6 +283,8 @@ def main():
                 {"asset_quantity": str(AMOUNT_TO_BUY)}
             )
             current_status["message"] = f"Sell order placed: {sell_order}"
+            # Log the sell trade
+            api_trading_client.db.log_trade(datetime.datetime.utcnow().isoformat(), "sell", AMOUNT_TO_BUY, bid_price)
             
             # Update baseline price again
             baseline_price = bid_price # Assuming immediate fill for simplicity
